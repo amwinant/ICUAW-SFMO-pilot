@@ -5,6 +5,7 @@ library(PhosR)
 library(msigdbr)
 library(readr)
 library(gt)
+library(edgeR)
 
 data_raw <- vroom(here("objects/sepsis_pilot_diann_report.unique_genes_matrix.tsv"))
 metadata <- read.csv(here("objects/metadata_protein.csv")) |>
@@ -187,7 +188,7 @@ pseudobulk_cluster <- sapply(names(split_idx), function(d) {
   Matrix::rowSums(mat[, split_idx[[d]], drop = FALSE])
 })
 pseudobulk_cluster[is.na(pseudobulk_cluster)] <- 0
-keep <- rowSums(cpm(pseudobulk_cluster) > 1) >= 2  
+keep <- rowSums(edgeR::cpm(pseudobulk_cluster) > 1) >= 2  
 pseudobulk_cluster <- pseudobulk_cluster[keep, ]
 colnames(pseudobulk_cluster) <- names(split_idx)
 
@@ -241,10 +242,15 @@ ggplot(volcano_df, aes(x = logFC, y = negLogFDR)) +
 
 # DEP annotation ---------------------------------------------------------------
 
-top_proteins <- rownames(results_pseudobulk)[1:227]  # adjust as desired
+sig_df <- results_pseudobulk %>%
+  rownames_to_column("protein") %>%
+  filter(adj.P.Val < 0.05 & abs(logFC) > 1)
 
-ego <- enrichGO(
-  gene = top_proteins,   
+up_proteins <- sig_df %>% filter(logFC > 0) %>% pull(protein)
+down_proteins <- sig_df %>% filter(logFC < 0) %>% pull(protein)
+
+ego_up <- enrichGO(
+  gene = up_proteins,
   OrgDb = org.Hs.eg.db,
   keyType = "SYMBOL",
   ont = "BP",
@@ -252,8 +258,37 @@ ego <- enrichGO(
   readable = TRUE
 )
 
-ego_clusters <- pairwise_termsim(ego)
-treeplot(ego_clusters, showCategory = 30)
+ego_up_sim <- pairwise_termsim(ego_up)
+
+ego_down <- enrichGO(
+  gene = down_proteins,
+  OrgDb = org.Hs.eg.db,
+  keyType = "SYMBOL",
+  ont = "BP",
+  pAdjustMethod = "fdr",
+  readable = TRUE
+)
+
+ego_down_sim <- pairwise_termsim(ego_down)
+tree_up <- treeplot(ego_up_sim, showCategory = 30) +
+  ggtitle("GO Treeplot — Upregulated Proteins")
+
+ego_down_df <- as.data.frame(ego_down)
+
+down <- ggplot(ego_down_df, aes(x = reorder(Description, Count), y = Count, fill = p.adjust)) +
+  geom_col() +
+  coord_flip() +
+  scale_fill_viridis_c(option = "C", direction = -1) +
+  labs(
+    title = "GO Terms — Downregulated Proteins",
+    x = NULL,
+    y = "Gene Count",
+    fill = "FDR"
+  ) +
+  theme_minimal()
+
+tree_up / down
+
 
 # Compare sig proteins to genes ------------------------------------------------
 
@@ -286,7 +321,6 @@ quadrants <- data.frame(
   fill = c("lightgreen", "orange", "lightgreen", "red")
 )
 
-# Plot
 ggplot(overlap_df, aes(x = logFC_RNA, y = logFC_prot, label = Gene)) +
 
   geom_rect(data = quadrants, 
@@ -316,8 +350,8 @@ annotations %>%
     table.border.bottom.color = "white"
   ) %>%
   cols_width(
-    Gene ~ px(120),          # first column narrow
-    everything() ~ px(400)   # all other columns wider (adjust as needed)
+    Gene ~ px(120),          
+    everything() ~ px(400)  
   ) %>%
   tab_style(
     style = list(
@@ -327,30 +361,199 @@ annotations %>%
     locations = cells_body()
   )
 
+# Count data -------------------------------------------------------------------
+rna_counts <- GetAssayData(seurat_obj, slot = "counts")
+genes_per_cell <- colSums(rna_counts > 0)
 
+rna_df <- data.frame(
+  cell = names(genes_per_cell),
+  genes = as.numeric(genes_per_cell),
+  sample = seurat_obj$sample,
+  condition = recode(seurat_obj$group, "C" = "Control", "S" = "ICU-AW")
+)
 
+prot_counts <- colSums(!is.na(normalized_data))
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# PCA by combined score
-ggplot(pca_df, aes(x = PC1, y = PC2, color = Combined_Score)) +
-  geom_point(alpha = 0.7) +
-  scale_color_viridis_c(option = "D") +
-  theme_bw() +
-  labs(
-    title = "Protein PCA colored by Combined Score",
-    x = paste0("PC1 (", round(var_expl[1], 1), "% variance)"),
-    y = paste0("PC2 (", round(var_expl[2], 1), "% variance)")
+prot_df <- data.frame(
+  cell = names(prot_counts),
+  proteins = prot_counts
+) %>%
+  left_join(filtered_metadata, by = c("cell" = "fiber_id")) %>%  # metadata has sample/subject info
+  mutate(
+    condition = recode(condition, "c" = "Control", "s" = "ICU-AW")
   )
+
+prot_df$sample <- gsub("^[csCS]", "", prot_df$subject)
+rna_long <- rna_df %>%
+  dplyr::select(sample, condition, count = genes) %>%
+  mutate(omic = "RNA: Detected Genes")
+
+prot_long <- prot_df %>%
+  dplyr::select(sample, condition, count = proteins) %>%
+  mutate(omic = "Proteomics: Detected Proteins")
+
+combined_long <- bind_rows(rna_long, prot_long)
+
+rna <- ggplot(rna_df, aes(x = sample, y = genes, fill = sample)) +
+  geom_violin(alpha = 0.65) +
+  geom_point(size = 1.5, alpha = 0.75) +
+  facet_grid(~ condition, scales = "free_x") +
+  scale_fill_viridis_d(option = "plasma") +
+  theme_bw() +
+  theme(
+    legend.position = "none",
+    text = element_text(size = 12),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  ) +
+  labs(
+    title = "Detected Genes per Fiber (RNA-seq)",
+    x = "Donor",
+    y = "Detected Genes"
+  )
+prot <- ggplot(prot_df, aes(x = sample, y = proteins, fill = sample)) +
+  geom_violin(alpha = 0.65) +
+  geom_point(size = 1.5, alpha = 0.75) +
+  facet_grid(~ condition, scales = "free_x") +
+  scale_fill_viridis_d(option = "plasma") +
+  theme_bw() +
+  theme(
+    legend.position = "none",
+    text = element_text(size = 12),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  ) +
+  labs(
+    title = "Detected Proteins per Fiber (Proteomics)",
+    x = "Donor",
+    y = "Detected Proteins"
+  )
+rna / prot
+
+# Scoring and integration with functional data ---------------------------------
+cluster_fibers <- c(
+  "c22f17", "s14_2f10", "s14_2f8", "s15_2f12", "s15_2f13",
+  "s15_2f2", "s15_2f3", "s15_2f7", "s15_2f9", "s20f1",
+  "s20f3", "s21f15", "s23f1", "s23f10", "s23f12", "s23f2",
+  "s23f3", "s23f4", "s23f5", "s23f6", "s23f7", "s23f8",
+  "s23f9", "s26f1", "s26f12", "s26f3", "s5_2f7", "s5_2f8",
+  "s8_2f16", "s8_2f2", "s8_2f3", "s8_2f4"
+)
+rna_norm <- readRDS("../pilot-rna/objects/seurat_normalized.rds")
+DefaultAssay(rna_norm) <- "RNA"
+rna_matrix <- GetAssayData(rna_norm, slot = "data")
+prot_matrix <- normalized_data
+
+rna_overlap <- rna_matrix[rownames(rna_matrix) %in% overlap_genes, , drop = FALSE]
+prot_overlap <- prot_matrix[rownames(prot_matrix) %in% overlap_genes, , drop = FALSE]
+
+common_cells <- intersect(colnames(rna_overlap), colnames(prot_overlap))
+rna_overlap_sub  <- rna_overlap[, common_cells, drop = FALSE]
+prot_overlap_sub <- prot_overlap[, common_cells, drop = FALSE]
+
+rna_score  <- colMeans(rna_overlap_sub,  na.rm = TRUE)
+prot_score <- colMeans(prot_overlap_sub, na.rm = TRUE)
+
+rna_score_z  <- as.numeric(scale(rna_score))
+prot_score_z <- as.numeric(scale(prot_score))
+
+combined_score <- (rna_score_z + prot_score_z) / 2
+names(combined_score) <- common_cells
+
+rna_norm@meta.data <- rna_norm@meta.data[1:length(colnames(rna_overlap)), ]
+rownames(rna_norm@meta.data) <- colnames(rna_overlap)
+rna_norm@meta.data$in_cluster <- ifelse(
+  rownames(rna_norm@meta.data) %in% cluster_fibers,
+  "cluster",
+  "other"
+)
+
+meta_data_subset <- rna_norm@meta.data[common_cells, ]
+
+
+meta_data_subset$Combined_Score <- combined_score
+meta_data_subset$in_cluster <- factor(
+  ifelse(rownames(meta_data_subset) %in% cluster_fibers, "cluster", "other"),
+  levels = c("other", "cluster")
+)
+
+func_metrics <- c("srx","drx","t1","t2")
+meta_data_subset[, func_metrics] <- lapply(meta_data_subset[, func_metrics], as.numeric)
+meta_data_subset <- meta_data_subset[complete.cases(meta_data_subset[, func_metrics]), ]
+
+p_srx <- wilcox.test(meta_data_subset$srx ~ meta_data_subset$in_cluster)$p.value
+p_drx <- wilcox.test(meta_data_subset$drx ~ meta_data_subset$in_cluster)$p.value
+p_t1  <- wilcox.test(meta_data_subset$t1  ~ meta_data_subset$in_cluster)$p.value
+p_t2  <- wilcox.test(meta_data_subset$t2  ~ meta_data_subset$in_cluster)$p.value
+
+plot_srx <- ggplot(meta_data_subset, aes(x = srx, y = Combined_Score, color = in_cluster)) +
+  geom_point(alpha = 0.7) +
+  geom_smooth(method = "lm", se = FALSE, color = "black") +
+  scale_color_manual(values = c("cluster"="red", "other"="gray70")) +
+  theme_bw() +
+  geom_text(
+    aes(x = Inf, y = Inf, label = paste0("p = ", signif(p_srx, 3))),
+    hjust = 1.1, vjust = 1.5, inherit.aes = FALSE, size = 5
+  ) +
+  labs(
+    x = "SRX",
+    y = "Combined RNA+Protein Score",
+    color = "Cluster",
+    title = "SRX vs Combined Score"
+  )
+
+plot_drx <- ggplot(meta_data_subset, aes(x = drx, y = Combined_Score, color = in_cluster)) +
+  geom_point(alpha = 0.7) +
+  geom_smooth(method = "lm", se = FALSE, color = "black") +
+  scale_color_manual(values = c("cluster"="red", "other"="gray70")) +
+  theme_bw() +
+  geom_text(
+    aes(x = Inf, y = Inf, label = paste0("p = ", signif(p_drx, 3))),
+    hjust = 1.1, vjust = 1.5, inherit.aes = FALSE, size = 5
+  ) +
+  labs(
+    x = "DRX",
+    y = "Combined RNA+Protein Score",
+    color = "Cluster",
+    title = "DRX vs Combined Score"
+  )
+
+plot_t1 <- ggplot(meta_data_subset, aes(x = t1, y = Combined_Score, color = in_cluster)) +
+  geom_point(alpha = 0.7) +
+  geom_smooth(method = "lm", se = FALSE, color = "black") +
+  scale_color_manual(values = c("cluster"="red", "other"="gray70")) +
+  theme_bw() +
+  geom_text(
+    aes(x = Inf, y = Inf, label = paste0("p = ", signif(p_t1, 3))),
+    hjust = 1.1, vjust = 1.5, inherit.aes = FALSE, size = 5
+  ) +
+  labs(
+    x = "T1",
+    y = "Combined RNA+Protein Score",
+    color = "Cluster",
+    title = "T1 vs Combined Score"
+  )
+
+plot_t2 <- ggplot(meta_data_subset, aes(x = t2, y = Combined_Score, color = in_cluster)) +
+  geom_point(alpha = 0.7) +
+  geom_smooth(method = "lm", se = FALSE, color = "black") +
+  scale_color_manual(values = c("cluster"="red", "other"="gray70")) +
+  theme_bw() +
+  geom_text(
+    aes(x = Inf, y = Inf, label = paste0("p = ", signif(p_t2, 3))),
+    hjust = 1.1, vjust = 1.5, inherit.aes = FALSE, size = 5
+  ) +
+  labs(
+    x = "T2",
+    y = "Combined RNA+Protein Score",
+    color = "Cluster",
+    title = "T2 vs Combined Score"
+  )
+
+combined_plot <- (plot_srx + plotd_drx) / (plot_t1 + plot_t2)
+combined_plot
+
+
+
+# Citations
+c("vroom", "here", "PhosR", "msigdbr", "readr", "gt", "dplyr", "Seurat", "ggplot2", "ggrepel", "tidyr", "stringr", "clusterProfiler", "org.Hs.eg.db", "scran", "scuttle", "tibble", "edgeR", "pheatmap", "fgsea", "viridis", "limma", "enrichplot") %>%
+  map(citation) %>%
+  print(style = "text")
