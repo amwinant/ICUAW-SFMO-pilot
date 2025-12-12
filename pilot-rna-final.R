@@ -15,6 +15,7 @@ library(pheatmap)
 library(fgsea)
 library(viridis)
 library(limma)
+library(enrichplot)
 
 counts <- readRDS("objects/merged_counts.rds")
 metadata <- readRDS("objects/metadata_updated.rds")
