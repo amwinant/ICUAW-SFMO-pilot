@@ -148,21 +148,37 @@ stopifnot(all(colnames(pseudobulk_donor) == donor_meta$donor_id))
 
 dge <- DGEList(counts = pseudobulk_donor) 
 dge <- calcNormFactors(dge) 
+
 design <- model.matrix(~ 0 + donor_meta$condition) 
 colnames(design) <- levels(factor(donor_meta$condition)) 
+
 v <- voom(dge, design) 
 fit <- lmFit(v, design) 
+
 contr <- makeContrasts(SvsC = s - c, levels = design) 
 fit2 <- contrasts.fit(fit, contr) 
 fit2 <- eBayes(fit2) 
-DE_results <- topTable(fit2, number = Inf) 
-DE_results <- DE_results %>% mutate( Signif_FDR = adj.P.Val < 0.05 & abs(logFC) > 1, Signif_P = P.Value < 0.05 & abs(logFC) > 1 ) 
-ggplot(DE_results, aes(x = logFC, y = -log10(adj.P.Val), color = Signif_FDR)) + 
+
+DE_results <- topTable(fit2, number = Inf)
+
+DE_results <- DE_results %>% 
+  mutate(
+    negLogP = -log10(P.Value),
+    Signif_FDR = adj.P.Val < 0.05 & abs(logFC) > 1
+  )
+p_fdr_cutoff <- max(DE_results$P.Value[DE_results$adj.P.Val < 0.05], na.rm = TRUE)
+
+ggplot(DE_results, aes(x = logFC, y = negLogP, color = Signif_FDR)) + 
   geom_point(size = 1.5) + 
   geom_vline(xintercept = c(-1, 1), linetype = "dashed") + 
-  geom_hline(yintercept = -log10(0.05), linetype = "dashed") + scale_color_manual(values = c("grey", "red")) + 
-  labs(title = "Volcano — Critical illness vs Control", y = "-log10(FDR)") + 
-  theme_minimal() 
+  geom_hline(yintercept = -log10(p_fdr_cutoff), linetype = "dashed") + 
+  scale_color_manual(values = c("grey", "red")) + 
+  labs(
+    title = "Volcano — Critical illness vs Control",
+    y = "-log10(p-value)"
+  ) + 
+  theme_minimal()
+
 
 # DE cluster v other -----------------------------------------------------------
 
@@ -218,17 +234,22 @@ results_pseudobulk <- topTable(fit, coef = coef_name, number = Inf)
 volcano_df <- results_pseudobulk %>%
   rownames_to_column("protein") %>%
   mutate(
-    sig = ifelse(adj.P.Val < 0.05 & abs(logFC) > 1, "sig", "ns"),
-    negLogFDR = -log10(adj.P.Val)
+    Signif_FDR = ifelse(adj.P.Val < 0.05 & abs(logFC) > 1, "sig", "ns"),
+    negLogP = -log10(P.Value)
   )
 
-ggplot(volcano_df, aes(x = logFC, y = negLogFDR)) +
-  geom_point(aes(color = sig), alpha = 0.7, size = 2) +
+p_fdr_cutoff <- max(
+  volcano_df$P.Value[volcano_df$adj.P.Val < 0.05],
+  na.rm = TRUE
+)
+
+ggplot(volcano_df, aes(x = logFC, y = negLogP)) +
+  geom_point(aes(color = Signif_FDR), alpha = 0.7, size = 2) +
   scale_color_manual(values = c("sig" = "red", "ns" = "grey")) +
   geom_vline(xintercept = c(-1, 1), linetype = "dashed") +
-  geom_hline(yintercept = -log10(0.05), linetype = "dashed") +
+  geom_hline(yintercept = -log10(p_fdr_cutoff), linetype = "dashed") +
   geom_text_repel(
-    data = subset(volcano_df, sig == "sig"),
+    data = subset(volcano_df, Signif_FDR == "sig"),
     aes(label = protein),
     size = 3,
     max.overlaps = 30
@@ -236,9 +257,10 @@ ggplot(volcano_df, aes(x = logFC, y = negLogFDR)) +
   labs(
     title = "Volcano — Cluster vs Other (pseudobulk by donor)",
     x = "log2 Fold Change (cluster / other)",
-    y = "-log10(FDR)"
+    y = "-log10(p-value)"
   ) +
   theme_minimal()
+
 
 # DEP annotation ---------------------------------------------------------------
 

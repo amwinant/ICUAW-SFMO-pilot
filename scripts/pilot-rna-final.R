@@ -117,17 +117,22 @@ var_expl <- pca_res$sdev^2 / sum(pca_res$sdev^2) * 100
 volcano_df <- res_voom %>%
   mutate(
     gene = rownames(res_voom),
-    negLogFDR = -log10(adj.P.Val),
-    sig = ifelse(adj.P.Val < 0.05 & abs(logFC) > 1, "sig", "ns")
+    negLogP = -log10(P.Value),
+    Signif_FDR = ifelse(adj.P.Val < 0.05 & abs(logFC) > 1, "sig", "ns")
   )
 
-ggplot(volcano_df, aes(x = logFC, y = negLogFDR)) +
-  geom_point(aes(color = sig), alpha = 0.7, size = 2) +
+p_fdr_cutoff <- max(
+  volcano_df$P.Value[volcano_df$adj.P.Val < 0.05],
+  na.rm = TRUE
+)
+
+ggplot(volcano_df, aes(x = logFC, y = negLogP)) +
+  geom_point(aes(color = Signif_FDR), alpha = 0.7, size = 2) +
   geom_vline(xintercept = c(-1, 1), linetype = "dashed") +
-  geom_hline(yintercept = -log10(0.05), linetype = "dashed") +
-  scale_color_manual(values = c("significance" = "red", "ns" = "grey")) +
+  geom_hline(yintercept = -log10(p_fdr_cutoff), linetype = "dashed") +
+  scale_color_manual(values = c("sig" = "red", "ns" = "grey")) +
   geom_text_repel(
-    data = subset(volcano_df, sig == "sig"),
+    data = subset(volcano_df, Signif_FDR == "sig"),
     aes(label = gene),
     size = 3,
     max.overlaps = 20
@@ -135,9 +140,10 @@ ggplot(volcano_df, aes(x = logFC, y = negLogFDR)) +
   labs(
     title = "Volcano — Critical illness vs Control",
     x = "log2 Fold Change (CI / C)",
-    y = "-log10(FDR)"
+    y = "-log10(p-value)"
   ) +
   theme_minimal()
+
 
 # Pathway analysis CvS ---------------------------------------------------------
 
@@ -366,26 +372,35 @@ fit <- eBayes(fit)
 
 top_genes <- topTable(fit, coef = "cluster_statuscluster", number = Inf, sort.by = "P")
 top_genes$FDR <- p.adjust(top_genes$P.Value, method = "fdr")
-top_genes$negLogFDR <- -log10(top_genes$FDR)
-top_genes$sig <- ifelse(top_genes$FDR < 0.05 & abs(top_genes$logFC) > 0.5, "sig", "ns")
 
+top_genes$negLogP   <- -log10(top_genes$P.Value)  # <-- NEW
+top_genes$negLogFDR <- -log10(top_genes$FDR)
+
+top_genes$Signif_FDR <- ifelse(
+  top_genes$FDR < 0.05 & abs(top_genes$logFC) > 0.5,
+  "sig", "ns"
+)
 top_genes$gene <- rownames(top_genes)
 
 top_label_genes <- top_genes$gene[order(top_genes$FDR)][1:50]
+p_fdr_cutoff <- max(top_genes$P.Value[top_genes$FDR < 0.05], na.rm = TRUE)
 
-ggplot(top_genes, aes(x = logFC, y = negLogFDR, color = sig)) +
+ggplot(top_genes, aes(x = logFC, y = negLogP, color = Signif_FDR)) +
   geom_point(alpha = 0.7) +
   geom_vline(xintercept = c(-0.5, 0.5), linetype = "dashed") +
-  geom_hline(yintercept = -log10(0.05), linetype = "dashed") +
+  geom_hline(yintercept = -log10(p_fdr_cutoff), linetype = "dashed") +
   geom_text_repel(
     data = subset(top_genes, gene %in% top_label_genes),
     aes(label = gene),
-    size = 3,
+    size = 2,
     max.overlaps = Inf
   ) +
   scale_color_manual(values = c("sig" = "red", "ns" = "grey")) +
-  labs(title = "Volcano Plot — Cluster vs Other", x = "log2 Fold Change", y = "-log10(FDR)")
-
+  labs(
+    title = "Volcano Plot — Cluster vs Other",
+    x = "log2 Fold Change",
+    y = "-log10(p-value)"
+  )
 # Cluster DEG annotation -------------------------------------------------------
 
 # GO term 
