@@ -174,7 +174,7 @@ ggplot(DE_results, aes(x = logFC, y = negLogP, color = Signif_FDR)) +
   geom_hline(yintercept = -log10(p_fdr_cutoff), linetype = "dashed") + 
   scale_color_manual(values = c("grey", "red")) + 
   labs(
-    title = "Volcano — Critical illness vs Control",
+    title = "Volcano — ICU-AW vs Control",
     y = "-log10(p-value)"
   ) + 
   theme_minimal()
@@ -394,7 +394,7 @@ rna_df <- data.frame(
   cell = names(genes_per_cell),
   genes = as.numeric(genes_per_cell),
   sample = seurat_obj$sample,
-  condition = recode(seurat_obj$group, "C" = "Control", "S" = "Critical illness")
+  condition = recode(seurat_obj$group, "C" = "Control", "S" = "ICU-AW")
 )
 
 prot_counts <- colSums(!is.na(normalized_data))
@@ -405,7 +405,7 @@ prot_df <- data.frame(
 ) %>%
   left_join(filtered_metadata, by = c("cell" = "fiber_id")) %>%  # metadata has sample/subject info
   mutate(
-    condition = recode(condition, "c" = "Control", "s" = "Critical illness")
+    condition = recode(condition, "c" = "Control", "s" = "ICU-AW")
   )
 
 prot_df$sample <- gsub("^[csCS]", "", prot_df$subject)

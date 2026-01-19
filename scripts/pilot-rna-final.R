@@ -138,8 +138,8 @@ ggplot(volcano_df, aes(x = logFC, y = negLogP)) +
     max.overlaps = 20
   ) +
   labs(
-    title = "Volcano — Critical illness vs Control",
-    x = "log2 Fold Change (CI / C)",
+    title = "Volcano — ICU-AW vs Control",
+    x = "log2 Fold Change (ICU-AW / C)",
     y = "-log10(p-value)"
   ) +
   theme_minimal()
@@ -171,7 +171,7 @@ fgsea_CS %>%
   scale_fill_viridis_c(direction = -1, option = "C") +
   theme_minimal() +
   labs(
-    title = "Top Enriched Hallmark Pathways (Critical illness vs Control)",
+    title = "Top Enriched Hallmark Pathways (ICU-AW vs Control)",
     x = "Normalized Enrichment Score (NES)",
     y = "Pathway",
     fill = "FDR"
@@ -233,7 +233,7 @@ annotation_col <- cell_meta %>%
   dplyr::rename(condition = group) %>%        
   dplyr::mutate(condition = recode(condition,    
                                    "C" = "Control",
-                                   "S" = "Critical Illness"))
+                                   "S" = "ICU-AW"))
 rownames(annotation_col) <- colnames(logcounts_top_scaled)
 
 heat <- pheatmap(
@@ -247,6 +247,8 @@ heat <- pheatmap(
   main = "Per-fiber expression of top 50 DE genes (lowest FDR)",
   silent = TRUE
 )
+grid::grid.newpage()
+heat
 
 # Select cluster ---------------------------------------------------------------
 
@@ -287,8 +289,8 @@ Idents(seurat_obj) <- "in_cluster"
 meta <- seurat_obj@meta.data %>%
   dplyr::mutate(
     in_cluster = factor(in_cluster, levels = c("other", "cluster")),
-    condition = recode(group, "C" = "Control", "S" = "Critical Illness") %>%
-      factor(levels = c("Control", "Critical Illness"))
+    condition = recode(group, "C" = "Control", "S" = "ICU-AW") %>%
+      factor(levels = c("Control", "ICU-AW"))
   )
 
 plot_data <- meta %>%
