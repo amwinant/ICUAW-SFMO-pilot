@@ -236,7 +236,7 @@ annotation_col <- cell_meta %>%
                                    "S" = "ICU-AW"))
 rownames(annotation_col) <- colnames(logcounts_top_scaled)
 
-heat <- pheatmap(
+heat <- pheatmap::pheatmap(
   logcounts_top_scaled,
   cluster_rows = TRUE,
   cluster_cols = TRUE,
@@ -294,13 +294,32 @@ meta <- seurat_obj@meta.data %>%
   )
 
 plot_data <- meta %>%
-  group_by(sample, in_cluster, condition) %>%
-  summarise(n = n(), .groups = "drop")
+  group_by(sample, group) %>%
+  mutate(total = n()) %>%          # total fibers per sample
+  ungroup() %>%
+  group_by(sample, in_cluster, group) %>%
+  summarise(
+    n = n(),
+    total = unique(total),          # use unique() instead of first()
+    .groups = "drop"
+  ) %>%
+  mutate(
+    percent = 100 * n / total
+  )
 
 ggplot(plot_data, aes(x = sample, y = n, fill = in_cluster)) +
   geom_bar(stat = "identity", color = "black") +
-  scale_fill_manual(values = c("other" = "gray70", "cluster" = "red")) +
-  facet_wrap(~condition, scales = "free_x") +
+  geom_text(
+    data = subset(plot_data, in_cluster == "cluster"),
+    aes(
+      y = total,
+      label = paste0(round(percent, 1), "%")
+    ),
+    vjust = -0.5,
+    size = 3
+  ) +
+  scale_fill_manual(values = c("cluster" = "red","other" = "gray70")) +
+  facet_wrap(~group, scales = "free_x") +
   theme_minimal(base_size = 14) +
   labs(
     title = "Fibers per donor by cluster status",
@@ -312,6 +331,7 @@ ggplot(plot_data, aes(x = sample, y = n, fill = in_cluster)) +
     axis.text.x = element_text(angle = 45, hjust = 1),
     panel.grid.major.x = element_blank()
   )
+
 
 # DE cluster v other -----------------------------------------------------------
 
@@ -371,6 +391,8 @@ cat("Consensus correlation:", corfit$consensus.correlation, "\n")
 
 fit <- lmFit(v, design, block = sample_info_filtered$donor, correlation = corfit$consensus.correlation)
 fit <- eBayes(fit)
+
+res <- topTable(fit, coef = "cluster_statuscluster", number = Inf)
 
 top_genes <- topTable(fit, coef = "cluster_statuscluster", number = Inf, sort.by = "P")
 top_genes$FDR <- p.adjust(top_genes$P.Value, method = "fdr")
@@ -451,3 +473,4 @@ fgsea_sig %>%
     fill = "FDR"
   ) +
   coord_cartesian(xlim = c(min(fgsea_sig$NES), max(fgsea_sig$NES) * 1.15))
+
