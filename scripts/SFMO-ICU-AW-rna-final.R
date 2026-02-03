@@ -62,6 +62,34 @@ seurat_obj <- readRDS("objects/seurat_normalized.rds")
 #   reduction.use = "pca"
 # )
 
+# Dynamic range
+counts <- GetAssayData(seurat_obj, slot = "counts")
+log10_counts <- log10(counts + 1)
+gene_means <- Matrix::rowMeans(log10_counts)
+gene_df <- data.frame(
+  gene = names(gene_means),
+  mean_log10_abundance = gene_means
+)
+mt_genes <- grep("^MT-", rownames(seurat_obj), value = TRUE)
+gene_df <- gene_df[!gene_df$gene %in% mt_genes, ]
+gene_df <- gene_df[order(gene_df$mean_log10_abundance, decreasing = TRUE), ]
+gene_df$rank <- seq_len(nrow(gene_df))
+top_genes <- gene_df[1:10, ]
+dyn_rna <- ggplot(gene_df, aes(x = rank, y = mean_log10_abundance)) +
+  geom_point(size = 0.3) +
+  geom_text_repel(
+    data = top_genes,
+    aes(label = gene),
+    size = 3,
+    max.overlaps = 20
+  ) +
+  theme_classic() +
+  labs(
+    x = "Gene rank",
+    y = "Mean log10 expression",
+    title = "Dynamic range of gene expression"
+  )
+
 # DE condition -----------------------------------------------------------------
 
 pseudo_bulk_CS <- readRDS("objects/pseudo_bulk_CS.rds")
@@ -223,17 +251,21 @@ logcounts_top_scaled <- t(scale(t(logcounts_top)))
 colnames(logcounts_top_scaled) <- colnames(logcounts_top)  
 
 cell_meta <- seurat_obj@meta.data
-annotation_col <- cell_meta %>%
-  dplyr::select(group, sample)
-rownames(annotation_col) <- colnames(logcounts_top_scaled)
-cell_meta <- seurat_obj@meta.data
-annotation_col <- cell_meta %>%
+annotation_col <- seurat_obj@meta.data %>%
   dplyr::select(group, sample) %>%
-  dplyr::rename(donor = sample) %>%  
-  dplyr::rename(condition = group) %>%        
-  dplyr::mutate(condition = recode(condition,    
-                                   "C" = "Control",
-                                   "S" = "ICU-AW"))
+  dplyr::rename(
+    donor = sample,
+    condition = group
+  ) %>%
+  dplyr::mutate(
+    condition = recode(condition,
+                       "C" = "Control",
+                       "S" = "ICU"),
+    donor = gsub("^[csCS]", "", donor),
+    donor = recode(donor, !!!fiber_map),
+    donor = paste(condition, donor, sep = " ")
+  )
+
 rownames(annotation_col) <- colnames(logcounts_top_scaled)
 
 heat <- pheatmap::pheatmap(
@@ -289,25 +321,28 @@ Idents(seurat_obj) <- "in_cluster"
 meta <- seurat_obj@meta.data %>%
   dplyr::mutate(
     in_cluster = factor(in_cluster, levels = c("other", "cluster")),
-    condition = recode(group, "C" = "Control", "S" = "ICU-AW") %>%
-      factor(levels = c("Control", "ICU-AW"))
+    condition = recode(group,
+                       "C" = "Control",
+                       "S" = "ICU-AW") %>%
+      factor(levels = c("Control", "ICU-AW")),
+    donor = gsub("^[csCS]", "", sample),
+    donor = recode(donor, !!!fiber_map),
+    donor_id = paste(condition, donor, sep = "_")
   )
 
 plot_data <- meta %>%
-  group_by(sample, group) %>%
-  mutate(total = n()) %>%          # total fibers per sample
+  group_by(donor_id, condition) %>%
+  mutate(total = n()) %>%
   ungroup() %>%
-  group_by(sample, in_cluster, group) %>%
+  group_by(donor_id, in_cluster, condition) %>%
   summarise(
     n = n(),
-    total = unique(total),          # use unique() instead of first()
+    total = unique(total),
     .groups = "drop"
   ) %>%
-  mutate(
-    percent = 100 * n / total
-  )
+  mutate(percent = 100 * n / total)
 
-ggplot(plot_data, aes(x = sample, y = n, fill = in_cluster)) +
+ggplot(plot_data, aes(x = donor_id, y = n, fill = in_cluster)) +
   geom_bar(stat = "identity", color = "black") +
   geom_text(
     data = subset(plot_data, in_cluster == "cluster"),
@@ -318,8 +353,9 @@ ggplot(plot_data, aes(x = sample, y = n, fill = in_cluster)) +
     vjust = -0.5,
     size = 3
   ) +
-  scale_fill_manual(values = c("cluster" = "red","other" = "gray70")) +
-  facet_wrap(~group, scales = "free_x") +
+  scale_fill_manual(values = c("cluster" = "red", "other" = "gray70")) +
+  facet_wrap(~condition, scales = "free_x") +
+  scale_x_discrete(labels = function(x) gsub(".*_", "", x)) +
   theme_minimal(base_size = 14) +
   labs(
     title = "Fibers per donor by cluster status",
@@ -332,7 +368,24 @@ ggplot(plot_data, aes(x = sample, y = n, fill = in_cluster)) +
     panel.grid.major.x = element_blank()
   )
 
-
+# Feature count
+plot_data <- seurat_obj@meta.data %>%
+  dplyr::mutate(
+    in_cluster = factor(in_cluster, levels = c("other", "cluster"))
+  ) %>%
+  dplyr::select(in_cluster, nFeature_RNA)
+rna_features <- ggplot(plot_data, aes(x = in_cluster, y = nFeature_RNA, fill = in_cluster)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+  geom_jitter(width = 0.2, size = 1.5, alpha = 0.8) +
+  scale_fill_manual(values = c("other" = "grey70", "cluster" = "steelblue")) +
+  theme_classic(base_size = 14) +
+  labs(
+    x = "Fiber group",
+    y = "Number of genes detected",
+    title = "Gene counts in cluster vs other fibers"
+  ) +
+  theme(legend.position = "none")
+rna_features
 # DE cluster v other -----------------------------------------------------------
 
 cluster_cells <- rownames(seurat_obj@meta.data)[seurat_obj$in_cluster == "cluster"]

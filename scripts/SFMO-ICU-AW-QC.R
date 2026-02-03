@@ -4,12 +4,34 @@
 rna_counts <- GetAssayData(seurat_obj, slot = "counts")
 genes_per_cell <- colSums(rna_counts > 0)
 
+fiber_map <- c(
+  "14"   = "1",
+  "15"   = "2",
+  "17"   = "3",
+  "18"   = "4",
+  "19"   = "5",
+  "22"   = "6",
+  "24"   = "7",
+  "25"   = "8",
+  "14_2" = "1",
+  "15_2" = "2",
+  "20"   = "3",
+  "21"   = "4",
+  "23"   = "5",
+  "26"   = "6",
+  "5_2"  = "7",
+  "8_2"  = "8"
+)
+
+
 rna_df <- data.frame(
   cell = names(genes_per_cell),
   genes = as.numeric(genes_per_cell),
   sample = seurat_obj$sample,
   condition = recode(seurat_obj$group, "C" = "Control", "S" = "ICU-AW")
 )
+rna_df <- rna_df %>%
+  mutate(sample = recode(as.character(sample), !!!fiber_map))
 
 prot_counts <- colSums(!is.na(normalized_data))
 
@@ -22,7 +44,10 @@ prot_df <- data.frame(
     condition = recode(condition, "c" = "Control", "s" = "ICU-AW")
   )
 
+
 prot_df$sample <- gsub("^[csCS]", "", prot_df$subject)
+prot_df <- prot_df %>%
+  mutate(subject = recode(as.character(sample), !!!fiber_map))
 rna_long <- rna_df %>%
   dplyr::select(sample, condition, count = genes) %>%
   mutate(omic = "RNA: Detected Genes")
@@ -49,7 +74,7 @@ rna <- ggplot(rna_df, aes(x = sample, y = genes, fill = sample)) +
     x = "Donor",
     y = "Detected Genes"
   )
-prot <- ggplot(prot_df, aes(x = sample, y = proteins, fill = sample)) +
+prot <- ggplot(prot_df, aes(x = subject, y = proteins, fill = sample)) +
   geom_violin(alpha = 0.65) +
   geom_point(size = 1.5, alpha = 0.75) +
   facet_grid(~ condition, scales = "free_x") +

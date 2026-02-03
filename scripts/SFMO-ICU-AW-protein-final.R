@@ -98,6 +98,40 @@ normalized_data <- filtered_data |>
   limma::normalizeBetweenArrays(method = "scale") |>
   as.data.frame()
 
+# Dynamic range
+log10_protein_data <- log10(normalized_data + 1) 
+
+protein_means <- rowMeans(log10_protein_data, na.rm = TRUE)
+
+protein_df <- data.frame(
+  protein = names(protein_means),
+  mean_log10_intensity = as.numeric(protein_means)  
+)
+krt_proteins <- grep("^KRT", protein_df$protein, value = TRUE, ignore.case = TRUE)
+protein_df <- protein_df[!protein_df$protein %in% krt_proteins, ]
+
+protein_df <- protein_df[order(protein_df$mean_log10_intensity, decreasing = TRUE), ]
+protein_df$rank <- seq_len(nrow(protein_df))
+
+top_proteins <- protein_df[1:10, ]
+dyn_prot <- ggplot(protein_df, aes(x = rank, y = mean_log10_intensity)) +
+  geom_line(color = "steelblue") +
+  geom_point(size = 0.5, alpha = 0.6) +
+  geom_text_repel(
+    data = top_proteins,
+    aes(label = protein),
+    size = 3,
+    max.overlaps = 20
+  ) +
+  theme_classic() +
+  labs(
+    x = "Protein rank",
+    y = "Mean log10 intensity",
+    title = "Dynamic range of protein abundance"
+  )
+
+dyn_rna + dyn_prot
+
 # Seurat object ----------------------------------------------------------------
 seurat_object <- normalized_data |>
   tImpute(m = 1.8, s = 0.3) |>
@@ -297,21 +331,46 @@ fiber_counts <- table(donor_vec) %>% as.data.frame()
 colnames(fiber_counts) <- c("donor_id", "num_fibers")
 fiber_counts$donor_id <- as.character(fiber_counts$donor_id)
 
-fiber_counts <- fiber_counts %>%
-  mutate(status = ifelse(num_fibers > 3, "kept", "filtered"))
 
-ggplot(fiber_counts, aes(x = reorder(donor_id, -num_fibers), y = num_fibers, fill = status)) +
+fiber_counts <- data.frame(
+  donor_raw = donor_vec,
+  stringsAsFactors = FALSE
+) %>%
+  dplyr::mutate(
+    condition = ifelse(grepl("^c", donor_raw), "Control", "ICU-AW"),
+    donor = donor_raw %>% gsub("^[csCS]", "", .),
+    donor = recode(donor, !!!fiber_map),
+    donor_id = paste(condition, donor, sep = "_")
+  ) %>%
+  dplyr::group_by(donor_id, condition) %>%
+  dplyr::summarise(
+    num_fibers = n(),
+    .groups = "drop"
+  ) %>%
+  dplyr::mutate(
+    status = ifelse(num_fibers > 3, "kept", "filtered")
+  )
+
+ggplot(fiber_counts, aes(
+  x = donor_id,
+  y = num_fibers,
+  fill = status
+)) +
   geom_bar(stat = "identity") +
   scale_fill_manual(values = c("kept" = "steelblue", "filtered" = "tomato")) +
+  scale_x_discrete(labels = function(x) gsub(".*_", "", x)) +
+  facet_wrap(~condition, scales = "free_x") +
   labs(
-    x = "Donor ID",
+    x = "Donor",
     y = "Number of fibers",
     fill = "Status",
     title = "Number of fibers per donor"
   ) +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
-
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid.major.x = element_blank()
+  )
 
 # DE cluster v other -----------------------------------------------------------
 
@@ -394,6 +453,28 @@ ggplot(volcano_df, aes(x = logFC, y = negLogP)) +
   ) +
   theme_minimal()
 
+# Feature count
+feature_count_protein <- colSums(!is.na(filtered_data))
+
+filtered_metadata$feature_count_protein <- feature_count_protein[filtered_metadata$fiber_id]
+plot_data_protein <- filtered_metadata %>%
+  dplyr::mutate(
+    cluster_status = ifelse(fiber_id %in% cluster_fibers, "cluster", "other"),
+    cluster_status = factor(cluster_status, levels = c("other", "cluster"))
+  ) %>%
+  dplyr::select(fiber_id, cluster_status, feature_count_protein)
+protein_features <- ggplot(plot_data_protein, aes(x = cluster_status, y = feature_count_protein, fill = cluster_status)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+  geom_jitter(width = 0.2, size = 1.5, alpha = 0.8) +
+  scale_fill_manual(values = c("other" = "grey70", "cluster" = "steelblue")) +
+  theme_classic(base_size = 14) +
+  labs(
+    x = "Fiber group",
+    y = "Number of proteins detected",
+    title = "Protein counts in cluster vs other"
+  ) +
+  theme(legend.position = "none")
+rna_features + protein_features
 
 # DEP annotation ---------------------------------------------------------------
 
