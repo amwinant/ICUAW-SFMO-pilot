@@ -91,3 +91,74 @@ prot <- ggplot(prot_df, aes(x = subject, y = proteins, fill = sample)) +
     y = "Detected Proteins"
   )
 rna / prot
+
+# Filtering
+
+feature_med <- median(meta_all$nFeature)
+feature_mad <- mad(meta_all$nFeature)
+
+count_med <- median(meta_all$nCount)
+count_mad <- mad(meta_all$nCount)
+
+feature_low <- feature_med - 3 * feature_mad
+feature_high <- feature_med + 3 * feature_mad
+
+count_low <- count_med - 3 * count_mad
+count_high <- count_med + 3 * count_mad
+
+ggplot(meta_all,
+       aes(x = log10(nCount),
+           y = nFeature,
+           color = filter_status)) +
+  geom_point(size = 1.5, alpha = 0.8) +
+  geom_vline(xintercept = log10(c(count_low, count_high)),
+             linetype = "dotted",
+             color = "red",
+             linewidth = 0.6) +
+  geom_hline(yintercept = c(feature_low, feature_high),
+             linetype = "dotted",
+             color = "red",
+             linewidth = 0.6) +
+  scale_color_manual(values = c(kept = "black", removed = "red")) +
+  labs(
+    x = "log10 total reads",
+    y = "Genes quantified",
+    color = "Sample status",
+    title = "RNA-seq QC filtering"
+  ) +
+  theme_minimal()
+
+
+raw_qc <- tibble(
+  sample = colnames(transformed_data),
+  total_intensity_raw = colSums(2^transformed_data, na.rm = TRUE),
+  proteins_quantified = colSums(!is.na(transformed_data)),
+  missing_fraction = colMeans(is.na(transformed_data))
+) %>%
+  mutate(
+    filter_status = ifelse(missing_fraction <= 0.5, "kept", "removed")
+  )
+
+normalized_total <- tibble(
+  sample = colnames(normalized_data),
+  total_intensity_norm = colSums(2^normalized_data, na.rm = TRUE)
+)
+
+protein_qc <- raw_qc %>%
+  left_join(normalized_total, by = "sample") %>%
+  mutate(
+    x_plot = ifelse(filter_status == "kept", total_intensity_norm, total_intensity_raw)
+  )
+
+ggplot(protein_qc, aes(x = x_plot, y = proteins_quantified)) +
+  geom_point(aes(color = filter_status), size = 2, alpha = 0.85) +
+  scale_color_manual(values = c(kept = "black", removed = "grey")) +
+  scale_x_log10() +
+  labs(
+    x = "Total Intensity (normalized for kept samples, raw for removed)",
+    y = "Proteins Quantified",
+    color = "Sample Status",
+    title = "Proteomics QC filtering"
+  ) +
+  theme_minimal() 
+

@@ -526,3 +526,4 @@ down <- ggplot(ego_down_df, aes(x = reorder(Description, Count), y = Count, fill
 tree_up / down
 
 tree_up
+down

@@ -250,6 +250,24 @@ logcounts_top <- logcounts_mat[top_genes_CS, , drop = FALSE]
 logcounts_top_scaled <- t(scale(t(logcounts_top)))
 colnames(logcounts_top_scaled) <- colnames(logcounts_top)  
 
+fiber_map <- c(
+  "14"   = "1",
+  "15"   = "2",
+  "17"   = "3",
+  "18"   = "4",
+  "19"   = "5",
+  "22"   = "6",
+  "24"   = "7",
+  "25"   = "8",
+  "14_2" = "1",
+  "15_2" = "2",
+  "20"   = "3",
+  "21"   = "4",
+  "23"   = "5",
+  "26"   = "6",
+  "5_2"  = "7",
+  "8_2"  = "8"
+)
 cell_meta <- seurat_obj@meta.data
 annotation_col <- seurat_obj@meta.data %>%
   dplyr::select(group, sample) %>%
